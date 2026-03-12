@@ -1,6 +1,6 @@
 # Medical AI Assistant
 
-DeepCareX is an AI-powered medical diagnosis system that predicts multiple diseases using **Machine Learning and Deep Learning models**.  
+Medical AI Assistant is an AI-powered medical diagnosis system that predicts multiple diseases using **Machine Learning and Deep Learning models**.  
 The system provides an easy-to-use **web interface built with Flask** where users can enter patient information or upload medical images to receive AI-based predictions.
 
 ---
