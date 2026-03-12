@@ -24,10 +24,10 @@ Additional Features:
 
 ---
 
-# How to run this project
+# Commands to run this project
 0. Install python 3.10 from python official website
 1. python -m venv venv
-2. Windows: venv\Scripts\activate
+2. venv\Scripts\activate
 3. pip install -r requirements.txt
 4. python create_db.py
 5. python main.py
