@@ -1,277 +1,446 @@
 import os
 import sqlite3
 import numpy as np
+import joblib
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import *
 from werkzeug.utils import secure_filename
 
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import load_img, img_to_array
 
-# ---------------- APP CONFIG ---------------- #
+
+# ---------------- CONFIG ---------------- #
 
 app = Flask(__name__)
-app.secret_key = "deepcarex_secret"
+app.secret_key = "deepcare_secret"
 
 UPLOAD_FOLDER = "database/Uploaded"
 DB_PATH = "database/DeepCareX.db"
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
 
 # ---------------- LOAD MODELS ---------------- #
 
-print("Loading AI Models...")
+print("Loading models...")
 
-MODELS = {
-    "alz": load_model("Models/Alzheimer/Alzheimer_CNN.hdf5", compile=False),
-    "brain": load_model("Models/Brain_Tumor/Brain_Tumor_VGG19.hdf5", compile=False),
-    "covid": load_model("Models/COVID/Covid.hdf5", compile=False),
-    "pneumonia": load_model("Models/Pneumonia/Pneumonia_DenseNet201.hdf5", compile=False),
-    "kidney": load_model("Models/Kidney/Kidney.hdf5", compile=False)
-}
+ALZ_MODEL = load_model("models/Alzheimer/Alzheimer_CNN.h5", compile=False)
+KIDNEY_MODEL = load_model("models/Kidney/kidney.h5", compile=False)
 
-print("All models loaded successfully!")
+BC_MODEL = joblib.load("models/Breast_Cancer/breast_cancer.pkl")
+DIA_MODEL = joblib.load("models/Diabetes/diab_xg1.pkl")
+HEP_MODEL = joblib.load("models/Hepatitis/hep.pkl")
+
+print("Models loaded successfully")
+
 
 # ---------------- DATABASE ---------------- #
 
-def execute(query, params=()):
+def insert_user(name,email,password):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute(query, params)
+    cur.execute("INSERT INTO USER VALUES (?,?,?)",(name,email,password))
     conn.commit()
     conn.close()
 
-def fetch(query, params=()):
+
+def check_user(name,password):
+
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute(query, params)
-    data = cur.fetchall()
+
+    cur.execute(
+        "SELECT * FROM USER WHERE NAME=? AND PASSWORD=?",
+        (name,password)
+    )
+
+    user = cur.fetchone()
+
     conn.close()
-    return data
 
-# ---------------- IMAGE HELPERS ---------------- #
+    return user is not None
 
-def save_image(img):
-    filename = secure_filename(img.filename)
-    path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    img.save(path)
-    return path
 
-def preprocess_image(path, size=(128,128)):
-    img = load_img(path, target_size=size)
-    img = img_to_array(img)/255.0
-    img = np.expand_dims(img, axis=0)
+def insert_contact(name,email,contact,msg):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("INSERT INTO CONTACT VALUES (?,?,?,?)",(name,email,contact,msg))
+
+    conn.commit()
+    conn.close()
+
+
+def insert_newsletter(email):
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("INSERT INTO NEWSLETTER VALUES (?)",(email,))
+
+    conn.commit()
+    conn.close()
+
+
+# ---------------- IMAGE UTILS ---------------- #
+
+def preprocess_image(path):
+
+    img = load_img(path,target_size=(128,128))
+    img = img_to_array(img)
+    img = img/255.0
+    img = np.expand_dims(img,axis=0)
+
     return img
 
-def predict_image(model, path):
 
-    img = preprocess_image(path)
-    pred = model.predict(img)
+def save_image(img):
 
-    return np.argmax(pred), float(np.max(pred))
+    filename = secure_filename(img.filename)
+    path = os.path.join(app.config["UPLOAD_FOLDER"],filename)
 
-# ---------------- AUTH ---------------- #
+    img.save(path)
+
+    return path
+
+
+# ---------------- HOME ---------------- #
 
 @app.route("/")
 def home():
     return render_template("home.html")
 
-@app.route("/login",methods=["POST"])
+
+# ---------------- LOGIN ---------------- #
+
+# ---------------- LOGIN ---------------- #
+
+@app.route("/login", methods=["POST"])
 def login():
 
-    name = request.form["name"]
-    password = request.form["password"]
+    name = request.form.get("name")
+    password = request.form.get("password")
 
-    user = fetch(
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute(
         "SELECT * FROM USER WHERE NAME=? AND PASSWORD=?",
-        (name,password)
+        (name, password)
     )
+
+    user = cur.fetchone()
+    conn.close()
 
     if user:
         session["user"] = name
-        return render_template("Alzheimer.html",login_user=name)
+        flash("Login successful", "success")
+        return redirect(url_for("Alzheimer"))
 
-    flash("Invalid credentials")
+    flash("Invalid Credential, Please try again", "danger")
     return redirect(url_for("home"))
 
-@app.route("/signup",methods=["POST"])
-def signup():
 
-    name = request.form["username"]
-    email = request.form["email"]
-    password = request.form["password"]
+# ---------------- REGISTER ---------------- #
 
-    execute(
-        "INSERT INTO USER VALUES(?,?,?)",
-        (name,email,password)
+@app.route("/register", methods=["POST"])
+def register():
+
+    username = request.form.get("username")
+    email = request.form.get("useremail")
+    password = request.form.get("userpassword")
+    confirm = request.form.get("confirm_userpassword")
+
+    if password != confirm:
+        flash("Passwords do not match", "danger")
+        return redirect(url_for("home"))
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT INTO USER (NAME, EMAIL, PASSWORD) VALUES (?, ?, ?)",
+        (username, email, password)
     )
 
-    session["user"]=name
-    return render_template("Alzheimer.html",login_user=name)
+    conn.commit()
+    conn.close()
+
+    flash("Registration successful", "success")
+
+    return redirect(url_for("home"))
+# ---------------- LOGOUT ---------------- #
 
 @app.route("/logout")
 def logout():
+
     session.pop("user",None)
+
     return redirect(url_for("home"))
 
-# ---------------- PATIENT DATA ---------------- #
 
-def get_patient():
+# ---------------- PAGES ---------------- #
 
-    return {
-        "name": request.form.get("name"),
-        "id": request.form.get("id"),
-        "age": request.form.get("age"),
-        "gender": request.form.get("gender"),
-    }
+@app.route("/Alzheimer")
+def Alzheimer():
 
-# ---------------- ALZHEIMER ---------------- #
+    if "user" in session:
+        return render_template("Alzheimer.html")
+
+    return redirect(url_for("home"))
+
+
+@app.route("/Kidney")
+def Kidney():
+
+    if "user" in session:
+        return render_template("Kidney.html")
+
+    return redirect(url_for("home"))
+
+
+@app.route("/Breast_Cancer")
+def Breast_Cancer():
+
+    if "user" in session:
+        return render_template("Breast_Cancer.html")
+
+    return redirect(url_for("home"))
+
+
+@app.route("/Diabetes")
+def Diabetes():
+
+    if "user" in session:
+        return render_template("Diabetes.html")
+
+    return redirect(url_for("home"))
+
+
+@app.route("/Hepatitis")
+def Hepatitis():
+
+    if "user" in session:
+        return render_template("Hepatitis.html")
+
+    return redirect(url_for("home"))
+
+
+@app.route("/About")
+def About():
+    return render_template("About.html")
+
+
+@app.route("/Contact")
+def Contact():
+    return render_template("Contact.html")
+
+
+# ---------------- CONTACT FORM ---------------- #
+
+@app.route("/Reply",methods=["POST"])
+def Reply():
+
+    name = request.form["name"]
+    email = request.form["email"]
+    contact = request.form["contact"]
+    msg = request.form["message"]
+
+    insert_contact(name,email,contact,msg)
+
+    flash("Message sent successfully")
+
+    return redirect(url_for("Contact"))
+
+
+# ---------------- NEWSLETTER ---------------- #
+
+@app.route("/Newsletter",methods=["POST"])
+def Newsletter():
+
+    email = request.form["email"]
+
+    insert_newsletter(email)
+
+    flash("Subscribed successfully")
+
+    return redirect(url_for("home"))
+
+
+# ---------------- ALZHEIMER REPORT ---------------- #
 
 @app.route("/Alzheimer_Report",methods=["POST"])
 def Alzheimer_Report():
 
-    data = get_patient()
+    name = request.form["name"]
+    pid = request.form["id"]
+    age = request.form["age"]
+    gender = request.form["gender"]
 
     img = request.files["image"]
-    img_path = save_image(img)
 
-    pred,conf = predict_image(MODELS["alz"],img_path)
+    path = save_image(img)
+
+    img = preprocess_image(path)
+
+    pred = ALZ_MODEL.predict(img)
 
     classes = [
-        "MildDemented",
-        "ModerateDemented",
-        "NonDemented",
-        "VeryMildDemented"
+        "Mild Demented",
+        "Moderate Demented",
+        "Non Demented",
+        "Very Mild Demented"
     ]
 
-    result = f"{classes[pred]} ({conf*100:.2f}%)"
+    result = classes[np.argmax(pred)]
 
     return render_template(
         "output.html",
-        name=data["name"],
-        id_=data["id"],
-        age=data["age"],
-        gender=data["gender"],
         disease="Alzheimer",
-        result=result
+        result=result,
+        name=name,
+        pid=pid,
+        age=age,
+        gender=gender
     )
-
-# ---------------- BRAIN TUMOR ---------------- #
-
-@app.route("/Brain_Tumor_Report",methods=["POST"])
-def Brain_Tumor_Report():
-
-    data = get_patient()
-
-    img = request.files["image"]
-    img_path = save_image(img)
-
-    pred,conf = predict_image(MODELS["brain"],img_path)
-
-    classes = [
-        "Glioma",
-        "Meningioma",
-        "No Tumor",
-        "Pituitary"
-    ]
-
-    result = f"{classes[pred]} ({conf*100:.2f}%)"
-
-    return render_template(
-        "output.html",
-        name=data["name"],
-        id_=data["id"],
-        age=data["age"],
-        gender=data["gender"],
-        disease="Brain Tumor",
-        result=result
-    )
-
-# ---------------- PNEUMONIA ---------------- #
-
-@app.route("/Pneumonia_Report",methods=["POST"])
-def Pneumonia_Report():
-
-    data = get_patient()
-
-    img = request.files["image"]
-    img_path = save_image(img)
-
-    pred,conf = predict_image(MODELS["pneumonia"],img_path)
-
-    classes=["Normal","Pneumonia"]
-
-    result = f"{classes[pred]} ({conf*100:.2f}%)"
-
-    return render_template(
-        "output.html",
-        name=data["name"],
-        id_=data["id"],
-        age=data["age"],
-        gender=data["gender"],
-        disease="Pneumonia",
-        result=result
-    )
-
-# ---------------- COVID ---------------- #
-
-@app.route("/Covid_Report",methods=["POST"])
-def Covid_Report():
-
-    data = get_patient()
-
-    img = request.files["image"]
-    img_path = save_image(img)
-
-    pred,conf = predict_image(MODELS["covid"],img_path)
-
-    classes=["COVID Positive","COVID Negative"]
-
-    result = f"{classes[pred]} ({conf*100:.2f}%)"
-
-    return render_template(
-        "output.html",
-        name=data["name"],
-        id_=data["id"],
-        age=data["age"],
-        gender=data["gender"],
-        disease="COVID",
-        result=result
-    )
-
-# ---------------- KIDNEY ---------------- #
+# ---------------- KIDNEY REPORT ---------------- #
 
 @app.route("/Kidney_Report",methods=["POST"])
 def Kidney_Report():
 
-    data = get_patient()
+    name = request.form["name"]
+    pid = request.form["id"]
+    age = request.form["age"]
+    gender = request.form["gender"]
 
     img = request.files["image"]
-    img_path = save_image(img)
 
-    pred,conf = predict_image(MODELS["kidney"],img_path)
+    path = save_image(img)
 
-    classes=[
+    img = preprocess_image(path)
+
+    pred = KIDNEY_MODEL.predict(img)
+
+    classes = [
         "Kidney Cyst",
         "Normal",
         "Kidney Stone",
         "Kidney Tumor"
     ]
 
-    result = f"{classes[pred]} ({conf*100:.2f}%)"
+    result = classes[np.argmax(pred)]
 
     return render_template(
         "output.html",
-        name=data["name"],
-        id_=data["id"],
-        age=data["age"],
-        gender=data["gender"],
         disease="Kidney Disease",
-        result=result
+        result=result,
+        name=name,
+        pid=pid,
+        age=age,
+        gender=gender
     )
+
+
+# ---------------- BREAST CANCER ---------------- #
+
+@app.route("/Breast_Cancer_Report",methods=["POST"])
+def Breast_Cancer_Report():
+
+    name = request.form["name"]
+    pid = request.form["id"]
+    age = request.form["age"]
+    gender = request.form["gender"]
+
+    radius = float(request.form["radius"])
+    texture = float(request.form["texture"])
+    perimeter = float(request.form["perimeter"])
+    area = float(request.form["area"])
+    smoothness = float(request.form["smoothness"])
+
+    inp = np.array([[radius,texture,perimeter,area,smoothness]])
+
+    pred = BC_MODEL.predict(inp)[0]
+
+    result = "Malignant" if pred==1 else "Benign"
+
+    return render_template(
+        "output.html",
+        disease="Breast Cancer",
+        result=result,
+        name=name,
+        pid=pid,
+        age=age,
+        gender=gender
+    )
+
+
+# ---------------- DIABETES ---------------- #
+
+@app.route("/Diabetes_Report",methods=["POST"])
+def Diabetes_Report():
+
+    name = request.form["name"]
+    pid = request.form["id"]
+    age = request.form["age"]
+    gender = request.form["gender"]
+
+    bmi = float(request.form["bmi"])
+    glucose = float(request.form["glucose"])
+    insulin = float(request.form["insulin"])
+
+    inp = np.array([[age,bmi,glucose,insulin]])
+
+    pred = DIA_MODEL.predict(inp)[0]
+
+    result = "Diabetic" if pred==1 else "Non Diabetic"
+
+    return render_template(
+        "output.html",
+        disease="Diabetes",
+        result=result,
+        name=name,
+        pid=pid,
+        age=age,
+        gender=gender
+    )
+
+
+# ---------------- HEPATITIS ---------------- #
+
+@app.route("/Hepatitis_Report",methods=["POST"])
+def Hepatitis_Report():
+
+    name = request.form["name"]
+    pid = request.form["id"]
+    age = request.form["age"]
+    gender = request.form["gender"]
+
+    alb = float(request.form["ALB"])
+    alp = float(request.form["ALP"])
+    alt = float(request.form["ALT"])
+    ast = float(request.form["AST"])
+
+    inp = np.array([[age,alb,alp,alt,ast]])
+
+    pred = HEP_MODEL.predict(inp)[0]
+
+    result = "Hepatitis Detected" if pred==1 else "No Hepatitis"
+
+    return render_template(
+        "output.html",
+        disease="Hepatitis",
+        result=result,
+        name=name,
+        pid=pid,
+        age=age,
+        gender=gender
+    )
+
 
 # ---------------- RUN ---------------- #
 
 if __name__ == "__main__":
-    app.run(debug=True,port=5001)
+    app.run(debug=True)
